@@ -1,5 +1,5 @@
 import { CdrReader } from "./CdrReader";
-import { CdrWriter } from "./CdrWriter";
+import { CdrWriter, stringLengthUtf8 } from "./CdrWriter";
 import { EncapsulationKind } from "./EncapsulationKind";
 
 const tf2_msg__TFMessage =
@@ -150,6 +150,26 @@ describe("CdrWriter", () => {
     expect(Array.from(reader.uint64Array().values())).toEqual([0n, 18446744073709551615n, 3n]);
   });
 
+  it.each(["", "abc", "こんにちは", "Ünïçödé", "🎉🚀", "mixed ascii と 日本語 と 🎉"])(
+    "round trips multibyte string %p",
+    (value) => {
+      const writer = new CdrWriter();
+      writer.string(value);
+
+      const utf8ByteLength = stringLengthUtf8(value);
+      const data = writer.data;
+      // 4 byte encapsulation header + 4 byte length prefix + UTF-8 bytes + null terminator
+      expect(data.byteLength).toEqual(4 + 4 + utf8ByteLength + 1);
+      // The length prefix must count UTF-8 bytes, not UTF-16 code units
+      expect(new DataView(data.buffer, data.byteOffset).getUint32(4, true)).toEqual(
+        utf8ByteLength + 1,
+      );
+
+      const reader = new CdrReader(data);
+      expect(reader.string()).toEqual(value);
+    },
+  );
+
   it("writes parameter lists", () => {
     const writer = new CdrWriter({ kind: EncapsulationKind.PL_CDR_LE });
     writer.uint8(0x42);
@@ -212,6 +232,30 @@ describe("CdrWriter", () => {
       "05400800" +  // uint32
       "0f00000000000000" //uint64
     );
+  });
+});
+
+describe("stringLengthUtf8", () => {
+  it.each<[string, number]>([
+    ["", 0],
+    ["abc", 3],
+    ["\u007f", 1], // U+007F: largest 1-byte code point
+    ["\u0080", 2], // U+0080: smallest 2-byte code point
+    ["Ünïçödé", 12], // 5 two-byte code points + 2 ascii
+    ["こんにちは", 15], // 5 three-byte code points
+    ["\uffff", 3], // U+FFFF: largest 3-byte code point in the BMP
+    ["🎉", 4], // surrogate pair -> 4 bytes
+    ["🎉🚀", 8],
+  ])("counts UTF-8 bytes of %p as %i", (value, expected) => {
+    expect(stringLengthUtf8(value)).toEqual(expected);
+    // Must agree with the platform UTF-8 encoder
+    expect(stringLengthUtf8(value)).toEqual(new TextEncoder().encode(value).length);
+  });
+
+  it("matches the TextEncoder byte length for lone surrogates", () => {
+    // A lone high surrogate is encoded as U+FFFD (3 bytes) by TextEncoder
+    const loneSurrogate = "\ud83c";
+    expect(stringLengthUtf8(loneSurrogate)).toEqual(new TextEncoder().encode(loneSurrogate).length);
   });
 });
 

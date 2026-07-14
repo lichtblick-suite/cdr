@@ -12,6 +12,35 @@ export type CdrWriterOpts = {
 
 const textEncoder = new TextEncoder();
 
+/**
+ * Returns the UTF-8 byte length of a string. `String.prototype.length` counts
+ * UTF-16 code units, which undercounts non-ASCII content and would corrupt the
+ * CDR length prefix, so the byte length is computed explicitly.
+ */
+export function stringLengthUtf8(str: string): number {
+  let byteLength = 0;
+  for (let i = 0; i < str.length; i++) {
+    const codeUnit = str.charCodeAt(i);
+    if (codeUnit <= 0x7f) {
+      byteLength += 1;
+    } else if (codeUnit <= 0x7ff) {
+      byteLength += 2;
+    } else if (0xd800 <= codeUnit && codeUnit <= 0xdbff) {
+      // Surrogate pair -> one 4-byte code point; a lone surrogate becomes U+FFFD (3 bytes)
+      const nextCodeUnit = str.charCodeAt(i + 1);
+      if (0xdc00 <= nextCodeUnit && nextCodeUnit <= 0xdfff) {
+        byteLength += 4;
+        i++;
+      } else {
+        byteLength += 3;
+      }
+    } else {
+      byteLength += 3;
+    }
+  }
+  return byteLength;
+}
+
 export class CdrWriter {
   static DEFAULT_CAPACITY = 16;
   static BUFFER_COPY_THRESHOLD = 10;
@@ -163,7 +192,7 @@ export class CdrWriter {
 
   // writeLength optional because it could already be included in a header
   string(value: string, writeLength = true): this {
-    const strlen = value.length;
+    const strlen = stringLengthUtf8(value);
     if (writeLength) {
       this.uint32(strlen + 1); // Add one for the null terminator
     }
