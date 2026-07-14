@@ -1,6 +1,6 @@
 {
   "name": "@lichtblick/cdr",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Common Data Representation serialization and deserialization library",
   "license": "MIT",
   "keywords": [
